@@ -223,7 +223,7 @@ More: [Data products, bundles and pipeline rules](docs/15-data-products-bundles-
 Approval happens in the pull request; Ontos shows the result. Every record in Ontos is written by
 the publisher identity from `main`, so a status there can only move after a Steward approved the
 change. That makes Ontos the place to see where each contract and product stands, and how it got
-there.
+there. The screens are from a test install with an earlier example product, Content.
 
 <img align="right" width="300" alt="The Ontos activity timeline for the Content data product, newest first: created at draft, then status changes draft to proposed, proposed to under_review, under_review to approved and approved to active, each made by the publisher identity." src="docs/assets/ontos-product-timeline.png">
 
