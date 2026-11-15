@@ -31,7 +31,7 @@
 
 | Pinned | Where | Upgrade by |
 |---|---|---|
-| Ontos v1.0.2 | The clone tag in step 6 | Test a new release on a non-production app first: the version workaround below may no longer be needed |
+| Ontos v1.0.2 | The clone tag in step 6 | `dpi` also works with v1.1.0 (see below). Test a new release on a non-production app first |
 | `datacontract-cli`, `databricks-sdk` | `pyproject.toml` | Change the range, run the tests, merge |
 | Python | `pythonVersion` in the environment file | 3.11 or later |
 | Agent image | `vmImage` in the environment file | Microsoft moves `ubuntu-latest` to each new Ubuntu LTS. Pin a version such as `ubuntu-24.04` to move on your own schedule |
@@ -39,7 +39,7 @@
 ## Known Ontos v1.0.2 behaviour
 
 - Uploading a file never updates an existing contract, so `dpi` finds records by `sourceId` and version.
-- Only `POST /api/data-contracts/{id}/versions` sets the version lineage. It copies the header only, so `dpi` fills the draft with a PUT and deletes it if that fails.
+- For a contract, only `POST /api/data-contracts/{id}/versions` sets the version lineage. It copies the header only, so `dpi` fills the draft with a PUT and deletes it if that fails.
 - PUT ignores `parentContractId`, `versionFamilyId` and servers, so later versions show no servers in Ontos. Unity Catalog stays the source of truth for where the tables live.
 - Clone (and the UI's new-version action) returns 500 on a contract with team members.
 - Ontos records no author on contracts or quality items. Who approved and published is in Azure DevOps and the Unity Catalog audit log.
@@ -47,6 +47,17 @@
 - An output port's version must equal its contract's version.
 - A changed port on an active product is a breaking change (409). Raise the product version in the file.
 - A new version of a contract or product leaves the old one as it was, often active. Deprecate it through a pull request once consumers have moved.
+- `POST /api/data-products/{id}/versions` leaves the new product version uncommitted, so a PUT to it fails with 404 "Data product not found". `dpi` creates the new version with `POST /api/data-products` instead, naming `parentProductId` and `versionFamilyId` (v1.1.0 has the same bug).
+- The product list shows only the newest version of each product unless the request asks for `include_history=true`, which `dpi` does (also v1.1.0).
+
+## What changes in Ontos v1.1.0
+
+`dpi` handles each of these, so the same files and pipelines work on both releases.
+
+- Uploading a contract returns HTTP 200 with a result per item. `dpi` fails the contract when Ontos reports it as skipped or failed.
+- A PUT to a contract or product refuses a status change. `dpi` changes status only through the status endpoints.
+- A team has `domain_ids` and a `primary_domain_id` in place of `domain_id`. `dpi` adds the domain to the team and keeps its primary domain.
+- Data products come back with the ODPS fields in camelCase (`outputPorts`, `contractId`), and with custom properties Ontos adds, such as `ontosOriginalDomain`. `dpi` keeps those properties when it updates the product.
 
 ## Troubleshooting
 

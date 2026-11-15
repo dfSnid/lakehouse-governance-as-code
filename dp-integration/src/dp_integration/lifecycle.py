@@ -1,4 +1,4 @@
-"""Ontos v1.0.2 lifecycle transitions, and the shortest walk from one status to another.
+"""Ontos lifecycle transitions (v1.0.2 and v1.1.0), and the shortest walk from one status to another.
 
 Ontos only moves an entity one allowed step at a time (draft cannot go straight to active), while
 the file in Git says where the entity should end up. The sync walks the steps in between, so a

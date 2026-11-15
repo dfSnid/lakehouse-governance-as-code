@@ -10,8 +10,8 @@ default) and version:
 - a version Ontos already has only gets its status brought in line with the file, one allowed
   step at a time (draft, proposed, approved, active), so a PR may skip steps.
 
-Ontos v1.0.2 cannot set servers on update, so later versions show no servers. Unity Catalog
-stays the source of truth for where the tables live.
+Works with Ontos v1.0.2 and v1.1.0. A later version shows no servers: v1.0.2 cannot set them
+on update. Unity Catalog stays the source of truth for where the tables live.
 
 Ontos shows a caller who is not an admin only the active and deprecated contracts, unless the
 caller is in the contract's owner team. The owner team is the domain's team from the registry,
@@ -76,7 +76,7 @@ class OntosContractSync:
                 continue
             detail = self.client.get_contract(summary["id"])
             props = detail.get("customProperties") or {}
-            if isinstance(props, list):  # ODCS list form; Ontos v1.0.2 returns a dict
+            if isinstance(props, list):  # ODCS list form; Ontos returns a dict
                 props = {p.get("property"): p.get("value") for p in props}
             if props.get(self.policy.source_id_property) == contract.id:
                 found.append(detail)
@@ -84,6 +84,9 @@ class OntosContractSync:
 
     def _align_status(self, record: dict, contract: DataContract) -> dict:
         log.info("  Ontos already has version %s (%s, %s)", contract.version, record["id"], record["status"])
+        return self._walk(record, contract)
+
+    def _walk(self, record: dict, contract: DataContract) -> dict:
         for status in walk(record["status"], contract.status, DATA_CONTRACT_TRANSITIONS):
             self.client.change_status(record["id"], status)
             log.info("  status %s -> %s", record["status"], status)
@@ -94,17 +97,29 @@ class OntosContractSync:
         body, team = self.import_body(contract), self.owner_team(contract)
         if team:  # Ontos import takes the owner team by name
             body["owner"] = team.name
-        record = self.client.import_odcs(body)
+        record = self._imported(contract, self.client.import_odcs(body))
         log.info("  imported version %s as %s (%s)", record["version"], record["id"], record["status"])
-        return record
+        return self._walk(record, contract)
+
+    def _imported(self, contract: DataContract, result: dict) -> dict:
+        """The contract record from an import response. v1.0.2 returns the contract; v1.1.0 returns
+        a batch result that reports a skipped or failed contract with HTTP 200."""
+        if "created_ids" not in result:
+            return result
+        if not result["created_ids"]:
+            reasons = "; ".join(f"{i.get('status')}: {i.get('message')}" for i in result.get("items") or [])
+            raise OntosError(f"Ontos did not import {contract}: {reasons or 'no contract created'}")
+        return self.client.get_contract(result["created_ids"][0])
 
     def _next_version(self, contract: DataContract, parent: dict) -> dict:
-        # Ontos v1.0.2 sets version lineage only when it creates the version itself: PUT and
-        # import ignore parentContractId, and /clone fails on contracts with a team. /versions
-        # copies the header only and starts as a draft, so the draft is filled from the file.
+        # Ontos sets version lineage only when it creates the version itself: PUT and import
+        # ignore parentContractId, and /clone fails on contracts with a team (v1.0.2). /versions
+        # copies the header only and starts as a draft, so the draft is filled from the file,
+        # then walked to the file's status: v1.1.0 refuses a status change in a PUT.
         draft = self.client.new_version(parent["id"], str(contract.version))
         try:
             body, team = self.update_body(contract), self.owner_team(contract)
+            body["status"] = draft["status"]
             if team:
                 body["owner_team_id"] = team.id
             record = self.client.update_contract(draft["id"], body)
@@ -114,7 +129,7 @@ class OntosContractSync:
             raise
         log.info("  version %s created as %s (%s), next after %s (%s)",
                  record["version"], record["id"], record["status"], parent["version"], parent["id"])
-        return record
+        return self._walk(record, contract)
 
     @staticmethod
     def import_body(contract: DataContract) -> dict[str, Any]:

@@ -10,6 +10,8 @@ from dp_integration.quality import QualityResults
 
 from conftest import FakeOntos
 
+pytestmark = pytest.mark.usefixtures("ontos_version")
+
 RUN = {"dataContractId": "sample-product", "dataContractVersion": "1.0.0", "runId": "r1", "server": "dev",
        "result": "warning", "timestampEnd": "2026-11-05T00:00:00Z",
        "checks": [{"dimension": "completeness", "result": "passed"},
@@ -54,6 +56,24 @@ def test_later_version_is_linked_to_the_newest_older_one(settings, write_contrac
     # 1.2.0 sorts below 1.10.0, so its parent is 1.0.0
     third = next(c for c in ontos.contracts.values() if c["version"] == "1.2.0")
     assert third["parent"] == first["id"]
+
+
+def test_new_version_is_walked_to_the_file_status(settings, write_contract):
+    ontos = FakeOntos()
+    sync = OntosContractSync(ontos, settings.ontos)
+    sync.sync(DataContract.from_file(write_contract(version="1.0.0", status="active")))
+    record = sync.sync(DataContract.from_file(write_contract(version="1.1.0", status="approved")))
+    assert ontos.contracts[record["id"]]["status"] == "approved"
+    assert [c[2] for c in ontos.calls if c[0] == "change_status" and c[1] == record["id"]] == ["proposed", "approved"]
+
+
+def test_skipped_import_is_an_error(settings, write_contract, ontos_version):
+    if ontos_version == "1.0.2":
+        pytest.skip("v1.0.2 answers a failed import with an HTTP error")
+    ontos = FakeOntos()
+    ontos.skip_import = True
+    with pytest.raises(OntosError, match="did not import .*skipped: already exists"):
+        OntosContractSync(ontos, settings.ontos).sync(DataContract.from_file(write_contract()))
 
 
 def test_failed_fill_deletes_the_draft(settings, write_contract):

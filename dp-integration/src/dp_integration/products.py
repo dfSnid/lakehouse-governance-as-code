@@ -13,11 +13,15 @@ Certification (custom property certificationLevel, an Ontos level name) and publ
 the file and sets the Unity Catalog certification tag (the Certified badge) on the port objects;
 a deprecated product gets the Deprecated badge instead.
 
-Ontos facts this relies on (v1.0.2): create ignores the file's id, so the product is found by the
-sourceId custom property and version; a product without an owner team is a personal draft only
-its creator can see, so the owner team is the domain's team; PUT applies the body's status with
-no transition check, so the sync sends the current status and moves it with change-status;
-PUT on a non-draft product rejects a breaking change (409) unless a new version is made.
+Ontos facts this relies on (v1.0.2 and v1.1.0): create ignores the file's id, so the product is
+found by the sourceId custom property and version; a product without an owner team is a personal
+draft only its creator can see, so the owner team is the domain's team; PUT does not move the
+status (v1.0.2 applies it with no transition check, v1.1.0 refuses a change), so the sync sends
+the current status and moves it with change-status; PUT on a non-draft product rejects a
+breaking change (409) unless a new version is made. A new version is a create with
+parentProductId and versionFamilyId, not POST /versions: that leaves the new version in an
+uncommitted session, so a PUT to it fails with 404. v1.1.0 adds its own custom properties
+(ONTOS_PROPERTIES), which the sync keeps and does not compare.
 """
 from __future__ import annotations
 
@@ -36,6 +40,8 @@ from .ontos_sync import OntosContractSync
 log = logging.getLogger(__name__)
 
 SCOPES = ("none", "domain", "organization", "external")
+# Custom properties Ontos v1.1.0 writes itself, to round-trip ids and unmatched domains.
+ONTOS_PROPERTIES = ("ontosOriginalId", "ontosEntityId", "ontosOriginalDomain")
 
 
 class GateError(RuntimeError):
@@ -164,7 +170,9 @@ class OntosProductSync:
             older = [r for r in records if Version(r["version"]) < product.version]
             if older:
                 parent = max(older, key=lambda r: Version(r["version"]))
-                same = self.client.new_product_version(parent["id"], str(product.version))
+                family = parent.get("version_family_id") or parent.get("versionFamilyId") or parent["id"]
+                same = self.client.create_product(dict(body, status="draft", parentProductId=parent["id"],
+                                                       versionFamilyId=family))
                 log.info("  version %s created from %s (%s)", product.version, parent["version"], same["id"])
             else:
                 same = self.client.create_product(dict(body, status="draft"))
@@ -189,7 +197,7 @@ class OntosProductSync:
         """Every Ontos record of this product, any version, matched on the source id property."""
         key = self.policy.source_id_property
         found = []
-        for record in self.client.list_products():
+        for record in self.client.list_products(include_history=True):
             props = record.get("custom_properties") or record.get("customProperties") or []
             if isinstance(props, list):
                 props = {p.get("property"): p.get("value") for p in props}
@@ -224,7 +232,9 @@ class OntosProductSync:
         """PUT only what differs, with the record's own id and current status."""
         if not _differs(record, body):
             return dict(record)
-        update = dict(body, id=record["id"], status=record["status"])
+        kept = [p for p in record.get("custom_properties") or record.get("customProperties") or []
+                if p.get("property") in ONTOS_PROPERTIES]
+        update = dict(body, id=record["id"], status=record["status"], customProperties=body["customProperties"] + kept)
         try:
             updated = self.client.update_product(record["id"], update)
         except OntosError as e:
@@ -286,18 +296,19 @@ class OntosProductSync:
 
 
 def _differs(record: dict, body: dict) -> bool:
-    """True when the Ontos record (snake_case, as Ontos returns it) does not match the body."""
-    def ports(items, contract_key):
-        return sorted((p.get("name"), str(p.get("version")), p.get(contract_key) or None,
+    """True when the Ontos record does not match the body. Ontos v1.0.2 returns the ODPS fields in
+    snake_case (output_ports, contract_id), v1.1.0 in camelCase like the body."""
+    def ports(items):
+        return sorted((p.get("name"), str(p.get("version")), p.get("contract_id") or p.get("contractId") or None,
                        p.get("description") or None) for p in items or [])
 
     def props(items):
-        return sorted((p.get("property"), str(p.get("value"))) for p in items or [])
+        return sorted((p.get("property"), str(p.get("value"))) for p in items or []
+                      if p.get("property") not in ONTOS_PROPERTIES)
 
     purpose = lambda d: (d or {}).get("purpose")  # noqa: E731
     return (record.get("name") != body["name"] or record.get("domain") != body["domain"]
             or purpose(record.get("description")) != purpose(body.get("description"))
             or (body.get("owner_team_id") and record.get("owner_team_id") != body["owner_team_id"])
-            or ports(record.get("output_ports") or record.get("outputPorts"), "contract_id")
-            != ports(body["outputPorts"], "contractId")
+            or ports(record.get("output_ports") or record.get("outputPorts")) != ports(body["outputPorts"])
             or props(record.get("custom_properties") or record.get("customProperties")) != props(body["customProperties"]))
