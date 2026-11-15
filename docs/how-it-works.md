@@ -222,8 +222,8 @@ set it. Before `under_review`, every port contract must be registered in Ontos.
 
 Ontos is the display copy. People read it; the publisher identity writes it. Approval happens in
 the pull request, so a contract or product in Ontos moves only after a Steward approved the
-change in git. The screens below are from a test install with the example Orders product. The
-publisher identity's id is replaced with `publisher-identity`.
+change in git. The screens below are from a test install with an earlier example product,
+Content. The publisher identity's id is replaced with `publisher-identity`.
 
 ### The contracts list
 
