@@ -16,7 +16,7 @@
 | Bundle deploy pipeline | One per product bundle. Deploys and builds in dev, then in prod behind an Azure DevOps Environment approval. | Platform team (template), Data Producers (bundle) |
 | Publisher identity | A user-assigned managed identity. Azure DevOps reaches it through an Azure Resource Manager service connection with workload identity federation. It is a service principal in Databricks. | Platform team |
 | Unity Catalog | Enforces access. Holds the governed tags, comments and the pointer back to the contract version and commit. | Platform team |
-| Ontos v1.0.2 | Data contract registry, deployed as a Databricks App on Lakebase. Shows contracts, versions and quality results. | Platform team |
+| Ontos v1.0.2 or v1.1.0 | Data contract registry, deployed as a Databricks App on Lakebase. Shows contracts, versions and quality results. | Platform team |
 | Groups | Producers, Stewards and Consumers per domain (account groups), plus an Azure DevOps group of Stewards per product for the branch policy. | Identity team |
 
 ## What the publish pipeline changes

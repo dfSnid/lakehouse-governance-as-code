@@ -1,4 +1,4 @@
-"""A small client for the Ontos v1.0.2 REST API, and the ways to get a token for it.
+"""A small client for the Ontos REST API (v1.0.2 and v1.1.0), and the ways to get a token for it.
 
 Ontos runs as a Databricks App, and the Apps proxy accepts Databricks OAuth tokens only. In a
 pipeline the publisher identity has an Entra token, so WorkspaceTokenExchange swaps it for a
@@ -118,6 +118,7 @@ class OntosClient:
         return self.call("GET", f"/api/data-contracts/{contract_id}")
 
     def import_odcs(self, document: dict) -> dict:
+        """The new contract (v1.0.2), or a batch result with created_ids (v1.1.0)."""
         return self.call("POST", "/api/data-contracts/odcs/import", document)
 
     def new_version(self, contract_id: str, version: str) -> dict:
@@ -160,22 +161,21 @@ class OntosClient:
         return self.call("POST", f"/api/teams/{team_id}/members", member)
 
     # Data products
-    def list_products(self) -> list[dict]:
-        return self.call("GET", "/api/data-products")
+    def list_products(self, include_history: bool = True) -> list[dict]:
+        """Every version with include_history; without it Ontos lists only the newest of each product."""
+        return self.call("GET", f"/api/data-products?include_history={str(include_history).lower()}")
 
     def get_product(self, product_id: str) -> dict:
         return self.call("GET", f"/api/data-products/{product_id}")
 
     def create_product(self, product: dict) -> dict:
+        """A new version also names its parentProductId and versionFamilyId."""
         return self.call("POST", "/api/data-products", product)
 
     def update_product(self, product_id: str, product: dict) -> dict:
-        """A full replace, status included: Ontos applies the body's status without checking the
-        transition, so send the current status and move it with change_product_status."""
+        """A full replace, status included: send the current status and move it with
+        change_product_status (v1.0.2 applies a new status unchecked, v1.1.0 refuses it)."""
         return self.call("PUT", f"/api/data-products/{product_id}", product)
-
-    def new_product_version(self, product_id: str, version: str) -> dict:
-        return self.call("POST", f"/api/data-products/{product_id}/versions", {"new_version": version})
 
     def change_product_status(self, product_id: str, status: str) -> dict:
         return self.call("POST", f"/api/data-products/{product_id}/change-status", {"new_status": status})

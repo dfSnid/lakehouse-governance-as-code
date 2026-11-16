@@ -9,6 +9,8 @@ from dp_integration.unity_catalog import UnityCatalogPublisher
 
 from conftest import FakeOntos, FakeWorkspace, table
 
+pytestmark = pytest.mark.usefixtures("ontos_version")
+
 TITLE = "sample_catalog.sample_schema.title"
 
 PRODUCT = """\
@@ -29,6 +31,15 @@ customProperties:
   - property: governanceTier
     value: 2
 {extra}"""
+
+
+def ports(stored):
+    return [{"contract_id": p.get("contract_id") or p.get("contractId"), **p}
+            for p in stored.get("output_ports") or stored.get("outputPorts")]
+
+
+def props(stored):
+    return stored.get("custom_properties") or stored.get("customProperties")
 
 
 @pytest.fixture
@@ -62,8 +73,8 @@ def test_create_walks_to_under_review_with_owner_team(world, write_product):
     record = sync.sync(write_product(status="under_review"), contracts, owner_team_id="team-1")
     stored = ontos.products[record["id"]]
     assert stored["status"] == "under_review" and stored["owner_team_id"] == "team-1"
-    assert stored["output_ports"][0]["contract_id"]  # the contract's Ontos id, not its ODCS id
-    assert {"property": "sourceId", "value": "sample"} in stored["custom_properties"]
+    assert ports(stored)[0]["contract_id"] in ontos.contracts  # the contract's Ontos id, not its ODCS id
+    assert {"property": "sourceId", "value": "sample"} in props(stored)
     assert [c[2] for c in ontos.calls if c[0] == "product_status"] == ["proposed", "under_review"]
 
 
@@ -82,7 +93,7 @@ def test_second_run_changes_nothing(world, write_product):
     sync.sync(product, contracts, "team-1")
     ontos.calls.clear()
     sync.sync(product, contracts, "team-1")
-    assert ontos.calls == []
+    assert ontos.calls == []  # Ontos's own custom properties (v1.1.0) are not a difference
 
 
 def test_update_keeps_the_current_status_in_the_put(world, write_product):
@@ -92,7 +103,10 @@ def test_update_keeps_the_current_status_in_the_put(world, write_product):
     product.document["description"] = {"purpose": "changed"}
     record = sync.sync(product, contracts, "team-1")
     assert ("update_product", record["id"], "active") in ontos.calls
-    assert ontos.products[record["id"]]["status"] == "active"
+    stored = ontos.products[record["id"]]
+    assert stored["status"] == "active" and stored["description"] == {"purpose": "changed"}
+    kept = [p for p in props(stored) if p["property"] == "ontosOriginalDomain"]
+    assert kept == ([{"property": "ontosOriginalDomain", "value": '["sales"]'}] if FakeOntos.version == "1.1.0" else [])
 
 
 def test_breaking_change_asks_for_a_new_version(world, write_product):
@@ -108,9 +122,13 @@ def test_breaking_change_asks_for_a_new_version(world, write_product):
 def test_new_version_starts_from_the_older_one(world, write_product):
     ontos, contracts, sync, _ = world()
     first = sync.sync(write_product(status="active"), contracts, "team-1")
+    ontos.calls.clear()
     second = sync.sync(write_product(status="active", version="1.1.0"), contracts, "team-1")
-    assert ontos.products[second["id"]]["parent"] == first["id"]
-    assert ontos.products[second["id"]]["status"] == "active"
+    stored = ontos.products[second["id"]]
+    assert stored["parent"] == first["id"] and stored["version_family_id"] == first["id"]
+    assert stored["status"] == "active" and stored["version"] == "1.1.0"
+    # Created with the file's content in one call: no PUT to a version Ontos may not have committed
+    assert [c[0] for c in ontos.calls if c[0] in ("create_product", "update_product")] == ["create_product"]
 
 
 @pytest.mark.parametrize("contract_status,built,target,message", [
@@ -166,3 +184,13 @@ def test_check_registry(tmp_path):
     registry = DomainRegistry.from_file(tmp_path / "domains.yaml")
     assert check_registry(registry, ["sales"]) == [
         "domain 'marketing' is registered but not an allowed value of the domain tag"]
+
+
+def test_a_newer_version_does_not_hide_the_older_ones(world, write_product):
+    # Ontos lists only the newest version of each product unless asked for its history
+    ontos, contracts, sync, _ = world()
+    first = sync.sync(write_product(status="active"), contracts, "team-1")
+    sync.sync(write_product(status="draft", version="1.2.0"), contracts, "team-1")
+    middle = sync.sync(write_product(status="active", version="1.1.0"), contracts, "team-1")
+    assert ontos.products[middle["id"]]["parent"] == first["id"]
+    assert sync.sync(write_product(status="active"), contracts, "team-1")["id"] == first["id"]

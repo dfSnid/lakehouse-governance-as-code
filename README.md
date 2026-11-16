@@ -321,7 +321,7 @@ You need:
 - An Azure Databricks Premium workspace with Unity Catalog, a serverless SQL warehouse,
   Databricks Apps and Lakebase Autoscaling.
 - An Azure DevOps organisation connected to the same Entra ID tenant.
-- A checkout of [Ontos](https://github.com/databrickslabs/ontos) v1.0.2, with its frontend built.
+- A checkout of [Ontos](https://github.com/databrickslabs/ontos) v1.0.2 or v1.1.0, with its frontend built.
 - On your machine: the Azure CLI with the `azure-devops` extension, the Databricks CLI 0.294 or
   later, Python 3.11 or later, Node.js (to build the Ontos frontend), git and rsync.
 
@@ -368,7 +368,7 @@ Each of the first three folders becomes its own Azure DevOps repository.
 
 ## Versions
 
-Verified with Databricks CLI 1.18 (0.294 or later works), Ontos v1.0.2, datacontract-cli 1.2.7 and databricks-sdk
+Verified with Databricks CLI 1.18 (0.294 or later works), Ontos v1.0.2 (v1.1.0 against a local Ontos only), datacontract-cli 1.2.7 and databricks-sdk
 0.151.0, on Microsoft-hosted `ubuntu-latest` agents. `dp-integration/pyproject.toml` pins the
 Python packages, so every pipeline run uses the same versions.
 

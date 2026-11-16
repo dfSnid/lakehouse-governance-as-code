@@ -5,6 +5,8 @@ from dp_integration.domains import DomainRegistry, OntosDomainSync
 
 from conftest import FakeOntos
 
+pytestmark = pytest.mark.usefixtures("ontos_version")
+
 REGISTRY = """\
 domains:
   - name: sales
@@ -45,12 +47,15 @@ def test_registry_rejects(tmp_path, text, message):
         DomainRegistry.from_file(path)
 
 
-def test_sync_creates_domains_and_team(registry):
+def test_sync_creates_domains_and_team(registry, ontos_version):
     ontos = FakeOntos()
     ids = OntosDomainSync(ontos).sync(registry)
     assert ontos.domains[ids["online"]]["parent_id"] == ids["sales"]
     (team,) = ontos.teams.values()
-    assert team["domain_id"] == ids["sales"]
+    if ontos_version == "1.0.2":
+        assert team["domain_id"] == ids["sales"]
+    else:
+        assert team["domain_ids"] == [ids["sales"]] and team["primary_domain_id"] == ids["sales"]
     assert [m["member_identifier"] for m in team["members"]] == [
         "dp-sales-stewards", "dp-sales-producers", "dp-publishers"]
 
@@ -74,3 +79,17 @@ def test_sync_adopts_an_auto_created_domain(registry):
     assert ids["sales"] == existing["id"]
     assert ("update_domain", existing["id"]) in ontos.calls
     assert ontos.domains[existing["id"]]["description"] == "What the business makes and buys"
+
+
+def test_existing_team_gets_the_domain(registry, ontos_version):
+    ontos = FakeOntos()
+    other = ontos.create_domain({"name": "other", "description": None, "parent_id": None})["id"]
+    team = ontos.create_team({"name": "sales-team", "title": "Sales", "domain_id": other,
+                              "domain_ids": [other], "primary_domain_id": other})
+    ids = OntosDomainSync(ontos).sync(registry)
+    stored = ontos.teams[team["id"]]
+    if ontos_version == "1.0.2":  # one domain per team: it moves
+        assert stored["domain_id"] == ids["sales"]
+    else:  # it keeps its other domains and its primary one
+        assert stored["domain_ids"] == [other, ids["sales"]] and stored["primary_domain_id"] == other
+    assert stored["title"] == "Sales"

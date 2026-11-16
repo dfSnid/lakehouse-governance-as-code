@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from dp_integration.config import Settings
+from dp_integration.contract import Version
 
 ROOT = Path(__file__).resolve().parents[1]
 # The values the pipeline commands need, so the tests pass whatever environments/dev.yml holds
@@ -135,10 +136,20 @@ def table(columns, comment=None, properties=None, table_type="MANAGED"):
                            comment=comment, properties=properties or {}, table_type=table_type)
 
 
+@pytest.fixture(params=["1.0.2", "1.1.0"])
+def ontos_version(request, monkeypatch):
+    """Runs a test once against each Ontos version FakeOntos models."""
+    monkeypatch.setattr(FakeOntos, "version", request.param)
+    return request.param
+
+
 class FakeOntos:
-    """The OntosClient methods the sync and role mapper use, on an in-memory store."""
+    """The OntosClient methods the sync and role mapper use, on an in-memory store. It models the
+    v1.0.2 API, or v1.1.0 where they differ: the import returns a batch result, a PUT refuses a status
+    change, teams have domain_ids, and products get Ontos's own custom properties."""
 
     base_url = "https://ontos.example"
+    version = "1.0.2"
 
     def __init__(self, fail_update=False):
         self.contracts, self.roles, self.calls = {}, [], []
@@ -148,6 +159,7 @@ class FakeOntos:
         self.breaking = False  # make a non-draft product PUT fail with 409
         self.fail_update = fail_update
         self.publisher_member_of = None  # a team id: list contracts as Ontos shows them to the publisher
+        self.skip_import = False  # v1.1.0: report the import as skipped, with HTTP 200
         self._ids = (f"id-{n}" for n in itertools.count(1))
 
     def _record(self, **fields):
@@ -167,10 +179,22 @@ class FakeOntos:
 
     def import_odcs(self, document):
         self.calls.append(("import", document["version"]))
+        if self.version == "1.1.0" and self.skip_import:
+            return {"created": 0, "skipped": 1, "failed": 0, "total": 1, "created_ids": [],
+                    "items": [{"index": 0, "status": "skipped", "message": "already exists"}]}
         team = next((t["id"] for t in self.teams.values() if t["name"] == document.get("owner")), None)
-        return self._record(name=document["name"], dataProduct=document.get("dataProduct"),
-                            version=str(document["version"]), status=document["status"],
-                            customProperties={"sourceId": document["id"]}, owner_team_id=team)
+        record = self._record(name=document["name"], dataProduct=document.get("dataProduct"),
+                              version=str(document["version"]), status=document["status"],
+                              customProperties={"sourceId": document["id"]}, owner_team_id=team)
+        if self.version == "1.0.2":
+            return record
+        return {"created": 1, "skipped": 0, "failed": 0, "total": 1, "created_ids": [record["id"]],
+                "items": [{"index": 0, "status": "created", "entity_id": record["id"], "name": record["name"]}]}
+
+    def _refuse_status_change(self, stored, body):
+        if self.version == "1.1.0" and body.get("status") not in (None, stored["status"]):
+            from dp_integration.ontos import OntosError
+            raise OntosError(f"400 status cannot change in an update ({stored['status']} -> {body['status']})", 400)
 
     def new_version(self, contract_id, version):
         self.calls.append(("new_version", contract_id, version))
@@ -183,6 +207,7 @@ class FakeOntos:
         if self.fail_update:
             from dp_integration.ontos import OntosError
             raise OntosError("PUT failed", 500)
+        self._refuse_status_change(self.contracts[contract_id], body)
         self.contracts[contract_id].update(body)
         return dict(self.contracts[contract_id])
 
@@ -228,15 +253,22 @@ class FakeOntos:
     def list_teams(self):
         return [dict(t, members=[dict(m) for m in t["members"]]) for t in self.teams.values()]
 
+    def _team_fields(self, team):  # each version ignores the other's domain fields
+        drop = ("domain_ids", "primary_domain_id") if self.version == "1.0.2" else ("domain_id",)
+        return {k: v for k, v in team.items() if k not in drop}
+
     def create_team(self, team):
         self.calls.append(("create_team", team["name"]))
-        record = dict(team, id=next(self._ids), members=[])
+        record = dict(self._team_fields(team), id=next(self._ids), members=[])
+        if self.version == "1.1.0":
+            record.setdefault("domain_ids", [])
+            record.setdefault("primary_domain_id", None)
         self.teams[record["id"]] = record
         return dict(record, members=[])
 
     def update_team(self, team_id, team):
         self.calls.append(("update_team", team_id))
-        self.teams[team_id].update(team)
+        self.teams[team_id].update(self._team_fields(team))
         return dict(self.teams[team_id])
 
     def add_team_member(self, team_id, member):
@@ -244,17 +276,27 @@ class FakeOntos:
         self.teams[team_id]["members"].append(dict(member))
         return dict(member)
 
-    # Data products, stored the way Ontos returns them (snake_case)
-    @staticmethod
-    def _product_fields(body):
+    # Data products, stored the way Ontos returns them: v1.0.2 uses snake_case for the ODPS fields,
+    # v1.1.0 camelCase. The Ontos fields (owner_team_id, certification_level) are snake_case in both.
+    def _product_fields(self, body):
+        props, ports, contract = ("custom_properties", "output_ports", "contract_id") if self.version == "1.0.2" \
+            else ("customProperties", "outputPorts", "contractId")
         return {"name": body.get("name"), "version": body.get("version"), "domain": body.get("domain"),
                 "description": body.get("description"), "owner_team_id": body.get("owner_team_id"),
-                "custom_properties": [dict(p) for p in body.get("customProperties") or []],
-                "output_ports": [{"name": p["name"], "version": p["version"], "description": p.get("description"),
-                                  "contract_id": p.get("contractId")} for p in body.get("outputPorts") or []]}
+                props: [dict(p) for p in body.get("customProperties") or []],
+                ports: [{"name": p["name"], "version": p["version"], "description": p.get("description"),
+                         contract: p.get("contractId")} for p in body.get("outputPorts") or []]}
 
-    def list_products(self):
-        return [dict(p) for p in self.products.values()]
+    def list_products(self, include_history=False):
+        products = list(self.products.values())
+        if not include_history:  # as Ontos without the parameter: only the newest version of each family
+            newest = {}
+            for p in products:
+                family = p.get("version_family_id") or p["id"]
+                if family not in newest or Version(p["version"]) > Version(newest[family]["version"]):
+                    newest[family] = p
+            products = list(newest.values())
+        return [dict(p) for p in products]
 
     def get_product(self, product_id):
         return dict(self.products[product_id])
@@ -262,7 +304,10 @@ class FakeOntos:
     def create_product(self, product):
         self.calls.append(("create_product", product["status"]))
         record = dict(self._product_fields(product), id=next(self._ids), status=product["status"],
-                      certification_level=None, publication_scope="none")
+                      certification_level=None, publication_scope="none", parent=product.get("parentProductId"))
+        record["version_family_id"] = product.get("versionFamilyId") or record["id"]
+        if self.version == "1.1.0":
+            record["customProperties"].append({"property": "ontosOriginalDomain", "value": f'["{product["domain"]}"]'})
         self.products[record["id"]] = record
         return dict(record)
 
@@ -272,15 +317,8 @@ class FakeOntos:
         if self.breaking and record["status"] != "draft":
             from dp_integration.ontos import OntosError
             raise OntosError("409 Breaking changes detected", 409)
+        self._refuse_status_change(record, product)
         record.update(self._product_fields(product), status=product["status"])
-        return dict(record)
-
-    def new_product_version(self, product_id, version):
-        self.calls.append(("new_product_version", product_id, version))
-        parent = self.products[product_id]
-        record = dict(parent, id=next(self._ids), version=version, status="draft", parent=product_id,
-                      certification_level=None, publication_scope="none")
-        self.products[record["id"]] = record
         return dict(record)
 
     def change_product_status(self, product_id, status):

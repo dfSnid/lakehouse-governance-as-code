@@ -17,7 +17,7 @@ git clone --branch v1.0.2 --depth 1 https://github.com/databrickslabs/ontos.git
 ls ontos/src/backend/static/index.html
 ```
 
-Stay on v1.0.2 until you have tested a newer release: the pipeline code works around two v1.0.2 bugs (see [Operations and troubleshooting](14-operations-and-troubleshooting.md)).
+`dpi` works with v1.0.2 and v1.1.0, and works around their known bugs (see [Operations and troubleshooting](14-operations-and-troubleshooting.md)). v1.0.2 is the release tested as a Databricks App. v1.1.0 is tested against a local Ontos only, so try it on a non-production app before you change the tag.
 
 ## 2. Before you start
 

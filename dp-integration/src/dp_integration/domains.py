@@ -129,16 +129,34 @@ class OntosDomainSync:
 
     def _sync_team(self, team: Team, domain_id: str, record: dict | None) -> None:
         if record is None:
-            record = self.client.create_team({"name": team.name, "title": team.title, "domain_id": domain_id})
+            record = self.client.create_team({"name": team.name, "title": team.title, **_team_domain(None, domain_id)})
             log.info("  team %s created (%s)", team.name, record["id"])
-        elif record.get("domain_id") != domain_id or (team.title and record.get("title") != team.title):
-            self.client.update_team(record["id"], {"title": team.title or record.get("title"), "domain_id": domain_id})
-            log.info("  team %s updated", team.name)
+        else:
+            update = _team_domain(record, domain_id)
+            if team.title and record.get("title") != team.title:
+                update["title"] = team.title
+            if update:
+                self.client.update_team(record["id"], dict(update, title=update.get("title") or record.get("title")))
+                log.info("  team %s updated", team.name)
         members = {m.get("member_identifier") for m in record.get("members") or [] if m.get("member_type") == "group"}
         for group in team.groups:
             if group not in members:
                 self.client.add_team_member(record["id"], {"member_type": "group", "member_identifier": group})
                 log.info("  team %s: group %s added", team.name, group)
+
+
+def _team_domain(record: dict | None, domain_id: str) -> dict:
+    """The team fields that put it in the domain, or {} if it is in it already. Ontos v1.0.2 has
+    one domain_id; v1.1.0 has domain_ids and a primary_domain_id, and ignores domain_id. Each
+    version ignores the other's fields, so a new team gets both. A team keeps its other domains."""
+    if record is None:
+        return {"domain_id": domain_id, "domain_ids": [domain_id], "primary_domain_id": domain_id}
+    if "domain_ids" not in record:
+        return {} if record.get("domain_id") == domain_id else {"domain_id": domain_id}
+    ids = [str(i) for i in record.get("domain_ids") or []]
+    if domain_id in ids:
+        return {}
+    return {"domain_ids": ids + [domain_id], "primary_domain_id": record.get("primary_domain_id") or domain_id}
 
 
 def team_ids(client: OntosClient) -> dict[str, str]:

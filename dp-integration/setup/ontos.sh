@@ -13,7 +13,7 @@
 # ontosAppName, ontosLakebaseProject and ontosAppCatalog; the publisher group and the role
 # mapping come from platform.yaml `ontos.roles`. Put the URL it prints into ontosUrl.
 #
-# ONTOS_SRC is the src/ folder of an Ontos v1.0.2 checkout with the frontend already built
+# ONTOS_SRC is the src/ folder of an Ontos v1.0.2 or v1.1.0 checkout with the frontend already built
 # (src/scripts/build_static.sh, which fills src/backend/static). OAUTH_PROFILE must be a
 # U2M OAuth login for an Ontos admin (workspace "admins" group): the app proxy rejects Entra
 # tokens, and only an admin can change Ontos roles.
@@ -22,7 +22,7 @@ set -euo pipefail
 : "${PROFILE:?set PROFILE to the workspace CLI profile}"
 : "${OAUTH_PROFILE:?set OAUTH_PROFILE to a workspace OAuth (U2M) profile}"
 : "${ACCOUNT_PROFILE:?set ACCOUNT_PROFILE to the account CLI profile}"
-: "${ONTOS_SRC:?set ONTOS_SRC to the src folder of an Ontos v1.0.2 checkout}"
+: "${ONTOS_SRC:?set ONTOS_SRC to the src folder of an Ontos v1.0.2 or v1.1.0 checkout}"
 . "$(dirname "$0")/lib.sh"
 WAREHOUSE_ID=$(cfg env.warehouseId)
 WORKSPACE_ID=$(cfg env.workspaceId)
@@ -83,7 +83,7 @@ else
 import json, sys
 name, branch, database, warehouse, catalog = sys.argv[1:]
 print(json.dumps({
-    "name": name, "description": "Ontos v1.0.2: data contract registry (dp-contracts)",
+    "name": name, "description": "Ontos: data contract registry (dp-contracts)",
     "resources": [
         {"name": "postgres", "postgres": {"branch": branch, "database": database,
                                           "permission": "CAN_CONNECT_AND_CREATE"}},
